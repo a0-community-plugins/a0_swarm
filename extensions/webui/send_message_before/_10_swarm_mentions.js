@@ -6,7 +6,7 @@
  * instead of (or in addition to) sending to the orchestrator.
  *
  * Supported targets:
- *   @SA{parent}_{slot}   exact agent_name (e.g. @SA1_3)
+ *   @SA{parent}_{slot}-{run}   exact agent_name shown in the panel
  *   @{slot}              numeric slot index across all currently-active
  *                        subagents (e.g. @1, @2)
  *   @all                 broadcast to every active subagent
@@ -44,7 +44,7 @@ function resolveToken(tok, activeAgents) {
         const slot = parseInt(tok, 10);
         const matches = activeAgents
             .map(a => {
-                const m = /^SA\d+_(\d+)$/.exec(a.agent_name);
+                const m = /^SA\d+_(\d+)(?:-|$)/.exec(a.agent_name);
                 return m && parseInt(m[1], 10) === slot ? a.agent_name : null;
             })
             .filter(Boolean);
@@ -61,6 +61,8 @@ async function sendToSubagent(agentName, content) {
         await callJsonApi(SUBAGENT_API, {
             agent_name: agentName,
             content,
+            parent_context_id:
+                (typeof globalThis.getContext === "function" && globalThis.getContext()) || "",
             unblock: false,
         });
     } catch (e) {

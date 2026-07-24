@@ -68,9 +68,46 @@
     .a0swarm-header__meta {
         display: inline-flex;
         align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
         gap: 0.5rem;
+        min-width: 0;
         font-size: 0.72rem;
         color: var(--color-text-muted);
+    }
+
+    .a0swarm-connection {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-width: 0;
+        white-space: nowrap;
+    }
+
+    .a0swarm-connection::before {
+        content: "";
+        width: 0.45rem;
+        height: 0.45rem;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--color-text-muted);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-muted) 14%, transparent);
+    }
+
+    .a0swarm-connection.state-live::before {
+        background: #22c55e;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 18%, transparent);
+    }
+
+    .a0swarm-connection.state-connecting::before,
+    .a0swarm-connection.state-polling::before {
+        background: var(--color-warning-text);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warning-text) 18%, transparent);
+    }
+
+    .a0swarm-connection.state-error::before {
+        background: var(--color-error-text);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-error-text) 18%, transparent);
     }
 
     .a0swarm-header__count {
@@ -114,6 +151,27 @@
     .a0swarm-body::-webkit-scrollbar-thumb {
         background: color-mix(in srgb, var(--color-border) 78%, transparent);
         border-radius: 999px;
+    }
+
+    .a0swarm-alert {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.55rem;
+        padding: 0.65rem 0.75rem;
+        border: 1px solid color-mix(in srgb, var(--color-error-text) 42%, var(--a0swarm-chrome-border));
+        border-radius: var(--a0swarm-card-radius);
+        background: color-mix(in srgb, var(--color-error-text) 9%, transparent);
+        color: var(--color-text);
+        font-size: 0.76rem;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+    }
+
+    .a0swarm-alert .material-symbols-outlined {
+        flex: 0 0 auto;
+        margin-top: 0.05rem;
+        font-size: 1.05rem;
+        color: var(--color-error-text);
     }
 
     /* ---------- Empty state ---------- */
@@ -178,6 +236,25 @@
     .a0swarm-empty__hint .material-symbols-outlined {
         font-size: 0.95rem;
         color: color-mix(in srgb, var(--color-text-muted) 70%, var(--color-highlight) 30%);
+    }
+
+    @media (max-width: 34rem) {
+        .a0swarm-header {
+            align-items: flex-start;
+            padding-inline: 0.7rem;
+        }
+
+        .a0swarm-header__meta {
+            gap: 0.35rem;
+        }
+
+        .a0swarm-body {
+            padding-inline: 0.7rem;
+        }
+
+        .a0swarm-connection__updated {
+            display: none;
+        }
     }
 
     /* ---------- Sections ---------- */
@@ -997,7 +1074,8 @@
 
 <div
     x-data
-    x-init="$store.swarmStore.init()"
+    x-create="$store.swarmStore.onMount()"
+    x-destroy="$store.swarmStore.cleanup()"
     class="a0swarm-panel"
     x-cloak
 >
@@ -1007,6 +1085,19 @@
             <span>Swarm</span>
         </div>
         <div class="a0swarm-header__meta">
+            <span
+                class="a0swarm-connection"
+                :class="'state-' + $store.swarmStore.connectionState"
+                :title="$store.swarmStore.lastError || 'Swarm status connection'"
+            >
+                <span x-text="$store.swarmStore.connectionLabel">connecting</span>
+            </span>
+            <span
+                class="a0swarm-connection__updated"
+                x-show="$store.swarmStore.lastUpdatedLabel"
+                x-text="$store.swarmStore.lastUpdatedLabel"
+                title="Last status update"
+            ></span>
             <span
                 class="a0swarm-header__count"
                 :class="{ 'is-zero': $store.swarmStore.activeAgents.length === 0 }"
@@ -1019,18 +1110,33 @@
 
     <div class="a0swarm-body">
 
+        <div
+            class="a0swarm-alert"
+            role="status"
+            x-show="$store.swarmStore.lastError"
+        >
+            <span class="material-symbols-outlined" aria-hidden="true">sync_problem</span>
+            <span x-text="$store.swarmStore.lastError"></span>
+        </div>
+
         <!-- ============ Empty state ============ -->
         <div class="a0swarm-empty" x-show="!$store.swarmStore.hasAgents">
             <span class="a0swarm-empty__icon-wrap" aria-hidden="true">
-                <span class="material-symbols-outlined">group_work</span>
+                <span
+                    class="material-symbols-outlined"
+                    x-text="$store.swarmStore.loading ? 'progress_activity' : 'group_work'"
+                >group_work</span>
             </span>
-            <div class="a0swarm-empty__title">No subagents running</div>
-            <div class="a0swarm-empty__desc">
-                The orchestrator can spawn parallel subagents that each work an
-                independent task in their own isolated context. Live status,
-                messages and controls for each subagent appear here.
+            <div
+                class="a0swarm-empty__title"
+                x-text="$store.swarmStore.loading ? 'Loading this chat’s swarm' : (!$store.swarmStore.hasParentContext ? 'Open a chat to view its swarm' : 'No subagents in this chat')"
+            >No subagents in this chat</div>
+            <div class="a0swarm-empty__desc" x-show="!$store.swarmStore.loading">
+                The orchestrator can delegate independent work to local or remote
+                subagents. Each agent has separate chat context; filesystem isolation
+                depends on the configured workspace mode.
             </div>
-            <span class="a0swarm-empty__hint">
+            <span class="a0swarm-empty__hint" x-show="$store.swarmStore.hasParentContext && !$store.swarmStore.loading">
                 <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
                 <span>delegate_parallel</span>
             </span>

@@ -4,7 +4,7 @@ Send a message to the orchestrator or to a peer subagent in the same swarm run. 
 A successful call means the message was accepted into the swarm ledger; the response includes the delivery state: `queued` (accepted, not yet delivered), `delivered` (target received it), or `failed` (with the reason). Peer messages are only allowed inside the same swarm run.
 
 Args:
-- `recipient` (string, required): `"orchestrator"` or a peer agent name such as `"SA1_2"`.
+- `recipient` (string, required): `"orchestrator"` or the exact peer agent name shown in the Swarm panel, such as `"SA1_2-a1b2c3"`.
 - `content` (string, required): the message content.
 - `is_blocker` (bool, optional): set `true` only when you cannot continue without help; this marks the sender BLOCKED.
 

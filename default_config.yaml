@@ -1,4 +1,5 @@
-max_parallel: 0
+# Finite by design. Values above 16 are clamped to the absolute safety ceiling.
+max_parallel: 4
 default_profile: ""
 result_kb_cap: 64
 

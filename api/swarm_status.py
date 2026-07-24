@@ -4,6 +4,12 @@ from usr.plugins.a0_swarm.helpers.registry import SwarmRegistry
 
 class SwarmStatus(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
-        parent = (input or {}).get("parent_context_id") or None
+        parent = str((input or {}).get("parent_context_id") or "").strip()
+        if not parent:
+            return {"parent_context_id": "", "runs": [], "agents": []}
         snap = SwarmRegistry.get().snapshot(parent_ctx_id=parent)
-        return {"runs": snap["runs"], "agents": snap["agents"]}
+        return {
+            "parent_context_id": parent,
+            "runs": snap["runs"],
+            "agents": snap["agents"],
+        }

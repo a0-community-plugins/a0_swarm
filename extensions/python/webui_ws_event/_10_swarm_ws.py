@@ -9,8 +9,14 @@ _subs: dict[str, tuple] = {}
 
 
 def _snapshot_payload(parent: str | None = None) -> dict:
+    if not parent:
+        return {"parent_context_id": "", "runs": [], "agents": []}
     snap = SwarmRegistry.get().snapshot(parent_ctx_id=parent or None)
-    return {"runs": snap["runs"], "agents": snap["agents"]}
+    return {
+        "parent_context_id": parent,
+        "runs": snap["runs"],
+        "agents": snap["agents"],
+    }
 
 
 def _make_push_cb(instance, sid: str, parent: str):

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import logging
 
 from agent import AgentContext, UserMessage
 try:
@@ -16,8 +15,14 @@ from usr.plugins.a0_swarm.helpers.registry import (
 )
 from usr.plugins.a0_swarm.helpers import a2a_runner, workspace
 from usr.plugins.a0_swarm.helpers.remotes import RemoteEndpoint, resolve_endpoint
-
-logger = logging.getLogger(__name__)
+from usr.plugins.a0_swarm.helpers.task_specs import (
+    SWARM_WORKER_CONTEXT_KEY,
+    effective_max_parallel,
+    normalize_tasks,
+    normalize_workspace_mode,
+    orchestration_conflict,
+    result_byte_cap,
+)
 
 
 def _load_cfg(agent) -> dict:
@@ -39,21 +44,34 @@ _A2A_TERMINAL_MAP = {
 
 class DelegateParallel(Tool):
     async def execute(self, tasks: list | None = None, **kwargs):
-        if not tasks:
+        conflict = orchestration_conflict(self.agent.context)
+        if conflict:
             return Response(
-                message="No tasks provided to delegate_parallel.",
+                message=(
+                    f"delegate_parallel rejected: {conflict}. "
+                    "Use one orchestration layer at a time."
+                ),
                 break_loop=False,
             )
 
         cfg = _load_cfg(self.agent)
-        max_parallel = int(cfg.get("max_parallel") or 0)
-        default_profile = (cfg.get("default_profile") or "").strip()
-        result_kb_cap = int(cfg.get("result_kb_cap") or 0)
-        self._result_byte_cap = (result_kb_cap * 1024) if result_kb_cap > 0 else MAX_RESULT_BYTES
+        max_parallel = effective_max_parallel(cfg.get("max_parallel"))
+        try:
+            tasks = normalize_tasks(tasks, max_parallel=max_parallel)
+        except ValueError as exc:
+            return Response(
+                message=f"delegate_parallel rejected: {exc}.",
+                break_loop=False,
+            )
+
+        configured_profile = str(cfg.get("default_profile") or "").strip()
+        parent_profile = str(getattr(self.agent.config, "profile", "") or "").strip()
+        default_profile = configured_profile or parent_profile
+        self._result_byte_cap = result_byte_cap(cfg.get("result_kb_cap"))
 
         # Where do local subs work? none (global workdir, default) | inherit (parent's project) |
         # isolated (own git worktree of the parent's repo). See helpers/workspace.py.
-        workspace_mode = (cfg.get("subagent_workspace") or "none").strip().lower()
+        workspace_mode = normalize_workspace_mode(cfg.get("subagent_workspace"))
         parent_project = projects.get_context_project_name(self.agent.context)
         if workspace_mode == "isolated":
             # reclaim isolated worktrees we own whose sub-context died before cleanup (crash-safe)
@@ -61,20 +79,6 @@ class DelegateParallel(Tool):
                 workspace.sweep_orphans([c.id for c in AgentContext.all()])
             except Exception:
                 pass
-
-        if max_parallel > 0 and len(tasks) > max_parallel:
-            return Response(
-                message=(
-                    f"delegate_parallel rejected: requested {len(tasks)} tasks "
-                    f"but plugin setting max_parallel={max_parallel}."
-                ),
-                break_loop=False,
-            )
-        if max_parallel == 0 and len(tasks) > 16:
-            logger.warning(
-                "delegate_parallel: large fan-out (%d tasks); no cap enforced.",
-                len(tasks),
-            )
 
         registry = SwarmRegistry.get()
         parent_ctx_id = self.agent.context.id
@@ -87,29 +91,34 @@ class DelegateParallel(Tool):
         coros = []
 
         for i, td in enumerate(tasks):
-            label = td.get("label", f"Agent-{i+1}")
-            task_text = td.get("task", "")
-            profile = td.get("profile", "") or default_profile
-            endpoint = (td.get("endpoint") or "").strip()
-            agent_name = f"SA{self.agent.number + 1}_{i+1}"
+            label = td["label"]
+            task_text = td["task"]
+            profile = td["profile"] or default_profile
+            endpoint = td["endpoint"]
+            agent_name = (
+                f"SA{self.agent.number + 1}_{i+1}-{run.run_id[-6:]}"
+            )
 
             if endpoint:
-                remote = resolve_endpoint(endpoint, agent=self.agent)
+                try:
+                    remote = resolve_endpoint(endpoint, agent=self.agent)
+                except Exception as exc:
+                    remote = None
+                    endpoint = f"{endpoint} ({str(exc)[:500]})"
                 if remote is None:
-                    # Unknown remote — record an immediately-failed entry
-                    entry = SwarmAgent(
-                        agent_name=agent_name, label=label, task=task_text,
-                        context_id="", parent_context_id=parent_ctx_id,
-                        status=SwarmAgentStatus.FAILED,
-                        started_at=utc_iso_now(),
+                    entry = self._register_failed_entry(
+                        registry=registry,
+                        run_id=run.run_id,
+                        parent_ctx_id=parent_ctx_id,
+                        agent_name=agent_name,
+                        label=label,
+                        task_text=task_text,
                         blocker=f"Unknown remote endpoint: {endpoint}",
                         remote_label=endpoint,
-                        run_id=run.run_id,
                         delivery_mode="remote_a2a",
                     )
-                    registry.register(entry)
                     entries.append(entry)
-                    coros.append(asyncio.sleep(0))   # placeholder
+                    coros.append(asyncio.sleep(0))
                     continue
 
                 entry = SwarmAgent(
@@ -129,19 +138,52 @@ class DelegateParallel(Tool):
                 continue
 
             # Local subagent path.
-            config = initialize_agent()
-            if profile:
-                config.profile = profile
-            sub_ctx = AgentContext(
-                config=config,
-                type=AgentContextType.BACKGROUND,
-                name=f"Swarm: {label}",
-            )
-            sub_agent = sub_ctx.agent0
-            sub_agent.agent_name = agent_name
+            sub_ctx = None
+            ws = None
+            try:
+                config = initialize_agent()
+                if profile:
+                    config.profile = profile
+                sub_ctx = AgentContext(
+                    config=config,
+                    type=AgentContextType.BACKGROUND,
+                    name=f"Swarm: {label}",
+                )
+                sub_ctx.set_data(
+                    SWARM_WORKER_CONTEXT_KEY,
+                    {
+                        "run_id": run.run_id,
+                        "parent_context_id": parent_ctx_id,
+                        "slot": i + 1,
+                    },
+                    recursive=False,
+                )
+                sub_agent = sub_ctx.agent0
+                sub_agent.agent_name = agent_name
 
-            # give the sub a workspace BEFORE it runs (its cwd is bound on first code-exec).
-            ws = workspace.setup(workspace_mode, parent_project, sub_ctx, run.run_id, i)
+                # Give the sub a workspace before it runs; code execution binds
+                # the working directory on first use.
+                ws = workspace.setup(
+                    workspace_mode,
+                    parent_project,
+                    sub_ctx,
+                    run.run_id,
+                    i,
+                )
+            except Exception as exc:
+                self._cleanup_local_setup(sub_ctx, ws)
+                entry = self._register_failed_entry(
+                    registry=registry,
+                    run_id=run.run_id,
+                    parent_ctx_id=parent_ctx_id,
+                    agent_name=agent_name,
+                    label=label,
+                    task_text=task_text,
+                    blocker=f"Local subagent setup failed: {str(exc)[:1500]}",
+                )
+                entries.append(entry)
+                coros.append(asyncio.sleep(0))
+                continue
 
             entry = SwarmAgent(
                 agent_name=agent_name, label=label, task=task_text,
@@ -158,13 +200,63 @@ class DelegateParallel(Tool):
         results = await asyncio.gather(*coros, return_exceptions=True)
         return Response(message=self._summarize(entries, results), break_loop=False)
 
+    @staticmethod
+    def _register_failed_entry(
+        *,
+        registry: SwarmRegistry,
+        run_id: str,
+        parent_ctx_id: str,
+        agent_name: str,
+        label: str,
+        task_text: str,
+        blocker: str,
+        remote_label: str = "",
+        delivery_mode: str = "local",
+    ) -> SwarmAgent:
+        timestamp = utc_iso_now()
+        entry = SwarmAgent(
+            agent_name=agent_name,
+            label=label,
+            task=task_text,
+            context_id="",
+            parent_context_id=parent_ctx_id,
+            status=SwarmAgentStatus.FAILED,
+            started_at=timestamp,
+            finished_at=timestamp,
+            blocker=blocker,
+            remote_label=remote_label,
+            run_id=run_id,
+            delivery_mode=delivery_mode,
+        )
+        registry.register(entry)
+        return entry
+
+    @staticmethod
+    def _cleanup_local_setup(sub_ctx, ws) -> None:
+        try:
+            if ws is not None:
+                ws.teardown()
+        except Exception:
+            pass
+        if sub_ctx is None:
+            return
+        try:
+            AgentContext.remove(sub_ctx.id)
+        except Exception:
+            pass
+        try:
+            from helpers import persist_chat
+            persist_chat.remove_chat(sub_ctx.id)
+        except Exception:
+            pass
+
     async def _run_subagent(self, sub_ctx, sub_agent, task_text, entry, ws=None):
         registry = SwarmRegistry.get()
         registry.update_status(entry.agent_name, SwarmAgentStatus.WORKING)
         try:
             sub_agent.hist_add_user_message(UserMessage(message=task_text))
             result = await sub_agent.monologue()
-            out = result or ""
+            out = str(result or "")
             # In isolated mode, tell the orchestrator which branch holds this sub's work, and make
             # clear it persists in the parent repo for merging (not an ephemeral throwaway dir).
             if ws is not None and getattr(ws, "mode", None) == "isolated" and getattr(ws, "branch", None):
@@ -186,20 +278,7 @@ class DelegateParallel(Tool):
             )
             raise
         finally:
-            try:
-                if ws is not None:
-                    ws.teardown()
-            except Exception:
-                pass
-            try:
-                AgentContext.remove(sub_ctx.id)
-            except Exception:
-                pass
-            try:
-                from helpers import persist_chat
-                persist_chat.remove_chat(sub_ctx.id)
-            except Exception:
-                pass
+            self._cleanup_local_setup(sub_ctx, ws)
             
     async def _run_remote(self, remote: RemoteEndpoint, task_text: str, entry: SwarmAgent):
         registry = SwarmRegistry.get()
@@ -242,6 +321,7 @@ class DelegateParallel(Tool):
 
         mapped = _A2A_TERMINAL_MAP.get(state, SwarmAgentStatus.FAILED)
         if mapped is SwarmAgentStatus.DONE:
+            result_text = str(result_text or "")
             stored = self._cap_result(result_text)
             registry.update_status(
                 entry.agent_name, SwarmAgentStatus.DONE,
@@ -269,15 +349,22 @@ class DelegateParallel(Tool):
         parts = []
         for entry, result in zip(entries, results):
             origin = f" via {entry.remote_label}" if entry.is_remote else ""
-            if isinstance(result, Exception):
+            if entry.status is SwarmAgentStatus.FAILED or isinstance(result, Exception):
+                detail = entry.blocker or str(result)
                 parts.append(
                     f"### {entry.label} ({entry.agent_name}){origin}\n"
-                    f"**Status:** FAILED\n**Error:** {result}\n"
+                    f"**Status:** FAILED\n**Error:** {detail}\n"
+                )
+            elif entry.status is SwarmAgentStatus.CANCELLED:
+                parts.append(
+                    f"### {entry.label} ({entry.agent_name}){origin}\n"
+                    f"**Status:** CANCELLED\n"
                 )
             else:
+                summary_result = self._cap_result(str(result or ""))
                 parts.append(
                     f"### {entry.label} ({entry.agent_name}){origin}\n"
-                    f"**Status:** DONE\n**Result:**\n{result}\n"
+                    f"**Status:** DONE\n**Result:**\n{summary_result}\n"
                 )
         return (
             f"## Parallel Delegation Complete\n"
