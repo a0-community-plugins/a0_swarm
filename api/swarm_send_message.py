@@ -11,14 +11,18 @@ class SwarmSendMessage(ApiHandler):
         agent_name = data.get("agent_name", "")
         content    = data.get("content", "")
         unblock    = bool(data.get("unblock", False))
+        parent     = str(data.get("parent_context_id") or "").strip()
 
-        if not agent_name or not content:
-            return {"ok": False, "error": "agent_name and content are required"}
+        if not agent_name or not content or not parent:
+            return {
+                "ok": False,
+                "error": "parent_context_id, agent_name, and content are required",
+            }
 
         reg = SwarmRegistry.get()
         entry = reg.get_agent(agent_name)
-        if not entry:
-            return {"ok": False, "error": f"Agent {agent_name} not found"}
+        if not entry or entry.parent_context_id != parent:
+            return {"ok": False, "error": "Agent not found in the active chat"}
 
         try:
             msg = reg.create_message(entry.run_id, "orchestrator", agent_name, content)

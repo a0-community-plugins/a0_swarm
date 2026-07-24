@@ -1,9 +1,49 @@
 <html>
 <head>
     <title>A0 Swarm</title>
+    <style>
+        .a0swarm-config,
+        .a0swarm-config * {
+            box-sizing: border-box;
+        }
+
+        .a0swarm-config,
+        .a0swarm-config .field,
+        .a0swarm-config .field-label,
+        .a0swarm-config .field-control {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .a0swarm-config input,
+        .a0swarm-config select,
+        .a0swarm-config button,
+        .a0swarm-config pre {
+            max-width: 100%;
+            min-width: 0;
+        }
+
+        .a0swarm-config pre,
+        .a0swarm-config code,
+        .a0swarm-config .field-description {
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 42rem) {
+            .a0swarm-config .field {
+                align-items: stretch;
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .a0swarm-config .field-control {
+                justify-content: flex-start;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div x-data>
+    <div x-data class="a0swarm-config">
         <template x-if="config">
             <div x-init="
               context.dockerCandidates = [];
@@ -113,13 +153,13 @@
                         <div class="field-title">Max parallel agents</div>
                         <div class="field-description">
                             Hard cap on subagents spawned by a single delegate_parallel call.
-                            0 means no cap (warning logged above 16).
+                            Four is the safe default; the absolute ceiling is 16.
                         </div>
                     </div>
                     <div class="field-control">
-                        <input type="number" min="0" max="64"
+                        <input type="number" min="1" max="16"
                             x-model.number="config.max_parallel"
-                            x-init="if (config.max_parallel === undefined || config.max_parallel === null) config.max_parallel = 0" />
+                            x-init="if (!Number.isInteger(config.max_parallel) || config.max_parallel < 1) config.max_parallel = 4" />
                     </div>
                 </div>
 
@@ -145,8 +185,8 @@
                         <div class="field-title">Result size cap (KB)</div>
                         <div class="field-description">
                             Maximum kilobytes of result text stored per subagent in the
-                            registry / panel. Larger results are truncated with a marker.
-                            The tool summary returned to the orchestrator is not capped.
+                            registry, panel, and orchestrator summary. Larger results are
+                            truncated with a marker.
                         </div>
                     </div>
                     <div class="field-control">

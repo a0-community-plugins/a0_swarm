@@ -1,7 +1,9 @@
 ### delegate_parallel
-Spawn multiple subagents to work on independent tasks in parallel. Each agent runs concurrently in its own isolated context and returns its result when done. Use this when a task decomposes into independent subtasks with no sequential dependency between them.
+Spawn multiple subagents to work on independent tasks in parallel. Each agent runs concurrently in a separate Agent Zero chat context and returns its result when done. Filesystem isolation depends on the configured workspace mode. Use this when a task decomposes into independent subtasks with no sequential dependency between them.
 
 All tasks in one `delegate_parallel` call share a single swarm run. Agents in the same run can message each other and the orchestrator with `swarm_message`. Use meaningful `label` values — the swarm panel uses them for observability.
+
+Use one orchestration layer at a time. Do not call this tool from an A0 Swarm worker or while Agent Harness is active in the same chat. Fan-out is bounded by plugin settings (four tasks by default, never more than 16).
 
 Args:
 - `tasks` (list, required): array of task objects. Each object:

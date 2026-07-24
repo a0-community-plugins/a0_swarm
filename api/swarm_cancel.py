@@ -9,14 +9,19 @@ from usr.plugins.a0_swarm.helpers.remotes import RemoteEndpoint
 
 class SwarmCancel(ApiHandler):
     async def process(self, input: dict, request: Request):
-        agent_name = (input or {}).get("agent_name", "")
-        if not agent_name:
-            return {"ok": False, "error": "agent_name is required"}
+        data = input or {}
+        agent_name = data.get("agent_name", "")
+        parent = str(data.get("parent_context_id") or "").strip()
+        if not agent_name or not parent:
+            return {
+                "ok": False,
+                "error": "parent_context_id and agent_name are required",
+            }
 
         reg = SwarmRegistry.get()
         entry = reg.get_agent(agent_name)
-        if not entry:
-            return {"ok": False, "error": f"Agent {agent_name} not found"}
+        if not entry or entry.parent_context_id != parent:
+            return {"ok": False, "error": "Agent not found in the active chat"}
 
         # Order matters: terminal status FIRST so the subagent's later
         # DONE/FAILED write is absorbed by terminal-state in update_status.
