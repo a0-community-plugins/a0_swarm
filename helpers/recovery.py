@@ -1,5 +1,6 @@
 """Plugin startup restores ownership; the job loop owns bounded reconciliation."""
 from .registry import SwarmRegistry
+import sys
 
 
 def restore():
@@ -16,6 +17,8 @@ def restore():
 
 
 def tick():
+    if getattr(sys, "_a0_swarm_chats_restoring", False):
+        return
     restore()
     from .execution import Coordinator
     Coordinator.get().tick()

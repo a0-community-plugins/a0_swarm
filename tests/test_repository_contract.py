@@ -19,11 +19,11 @@ class RepositoryContractTests(unittest.TestCase):
         ):
             self.assertTrue((PLUGIN_ROOT / filename).is_file(), filename)
         manifest = (PLUGIN_ROOT / "plugin.yaml").read_text(encoding="utf-8")
-        self.assertIn("version: 2.1.1", manifest)
+        self.assertIn("version: 2.2.0", manifest)
         marketplace_manifest = (PLUGIN_ROOT / "plugin.json").read_text(
             encoding="utf-8"
         )
-        self.assertIn('"version": "2.1.1"', marketplace_manifest)
+        self.assertIn('"version": "2.2.0"', marketplace_manifest)
 
     def test_install_lifecycle_is_hook_owned(self):
         hooks = (PLUGIN_ROOT / "hooks.py").read_text(encoding="utf-8")

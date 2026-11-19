@@ -1,7 +1,50 @@
-# Durable orchestration validation
+# Swarm recovery validation
 
 Date: 2026-11-18. Base: `f7b278dd9d107b0663393f1aa48e500618dc54fe`.
-Plugin version: 2.1.1. This file records validation evidence; GitHub records publication status.
+Plugin version: 2.2.0. This file records validation evidence; GitHub records publication status.
+
+## Warm recovery (2.2.0)
+
+- Existing suite plus the first three recovery cases: 27 passed. After refining
+  error handling, the four focused recovery cases passed (1.5 seconds).
+- `scripts/verify_warm_recovery.py --framework /a0` passed with the real Python
+  3.12.4 framework, enabled extension discovery, native Responses function calls,
+  actual tool execution and chat restoration. One worker survived synchronized
+  SIGKILLs after its model receipt and during its command: same context, attempt
+  1, recovery count 2, two model calls total, one command effect. Model output and
+  prompt text were deterministic; this check made no external provider calls.
+- The initial fixture exposed an incorrect native workdir translation. It was
+  corrected before the passing run. No core files or dependencies were changed.
+- The focused cases cover bounded recovery, stale-attempt rejection, duplicate
+  command prevention, missing runner outcomes, cancellation before dispatch, and
+  exiting the framework retry loop when tool effects are unknown.
+
+The first live worker declined the worker-only command because its generic Agent
+Zero prompt described a parent role. No command ran. The plugin now supplies an
+explicit runtime worker role; acceptance after that correction is recorded below.
+
+The corrected candidate was installed through the normal Plugin Hub update API
+in the launcher instance at `http://127.0.0.1:60030/`, Agent Zero v2.16 at core
+`2b0b3a416d80638379dc575798a4174ab4d3e1d9`. Its configured provider-backed worker
+started one `swarm_execute` Python command, wrote a marker, and waited. The normal
+restart API changed the server PID while the original detached command stayed
+alive. Startup restored the worker automatically; it consumed the original
+command receipt and returned `SWARM_WARM_RECOVERED_20261118`.
+
+- Same worker context `EhFYcgz2`, attempt **1**, recovery count **1**.
+- Command completed with exit code **0**; marker content remained exactly **x**.
+- The aggregate result was ready to collect; all contexts were idle afterward.
+- Native Responses history and provider state were retained in the checkpoint.
+  Provider cache hits and latency savings were not measured.
+- After browser reload, the panel showed **Done / Attempt 1 / Recovered 1**.
+  Swarm was the only visible canvas surface; the console had no errors.
+- CI passed on Python 3.11, 3.12 and 3.13. No remote A2A provider, machine power
+  loss, storage loss or interactive-session restoration was tested.
+
+The one corrected live run is the restart acceptance check. It was not repeated
+after passing. The first declined command and initial fixture path correction
+remain documented above rather than being counted as successful checks.
+
 
 ## Live integration correction (2.1.1)
 
@@ -52,9 +95,10 @@ The pre-publication checks used separate temporary copies with the framework
 interpreter. The live integration correction above subsequently installed the
 plugin and restarted the named server. No dependencies were installed.
 
-Full local model/tool checkpoint replay is not implemented or claimed. Interrupted
-local execution holds for review. A separate verified engine integration is
-required to resume those turns. Remote tests use deterministic collaborators;
+Version 2.2 supports the worker checkpoints and finite batch-command adapter
+described in README. Arbitrary in-flight tools, volatile interactive sessions,
+unknown command outcomes and incompatible core changes remain held. The 2.1
+evidence above predates this adapter. Remote tests use deterministic collaborators;
 they establish submit/poll/uncertainty behavior, not acceptance by a real remote.
 
 The pre-publication browser's API and WebSocket collaborators are synthetic. Those checks establish

@@ -1184,6 +1184,7 @@
                             </span>
                             <span class="a0swarm-card__status" x-text="$store.swarmStore.statusLabel(agent.status)"></span>
                             <span class="a0swarm-card__status" x-text="'Attempt ' + (agent.attempt || 1)"></span>
+                            <span class="a0swarm-card__status" x-show="agent.resume_count" x-text="'Recovered ' + agent.resume_count"></span>
                             <button class="a0swarm-btn" x-show="agent.status === 'needs_review' && !agent.cancel_requested && !agent.remote_task_id" @click.stop="$store.swarmStore.recover(agent, 'retry')">Review retry</button>
                             <button class="a0swarm-btn" x-show="agent.remote_task_id && agent.status === 'needs_review' && !agent.cancel_requested" @click.stop="$store.swarmStore.recover(agent, 'check')">Check status</button>
 
@@ -1372,6 +1373,7 @@
                             </span>
                             <span class="a0swarm-card__status" x-text="$store.swarmStore.statusLabel(agent.status)"></span>
                             <span class="a0swarm-card__status" x-text="'Attempt ' + (agent.attempt || 1)"></span>
+                            <span class="a0swarm-card__status" x-show="agent.resume_count" x-text="'Recovered ' + agent.resume_count"></span>
                             <button class="a0swarm-btn" x-show="agent.status === 'needs_review' && !agent.cancel_requested && !agent.remote_task_id" @click.stop="$store.swarmStore.recover(agent, 'retry')">Review retry</button>
                             <button class="a0swarm-btn" x-show="agent.remote_task_id && agent.status === 'needs_review' && !agent.cancel_requested" @click.stop="$store.swarmStore.recover(agent, 'check')">Check status</button>
 

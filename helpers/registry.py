@@ -211,6 +211,8 @@ class SwarmAgent:
     next_wake: float = 0
     generation: int = 0
     cancel_requested: bool = False
+    checkpoint: dict = field(default_factory=dict)
+    resume_count: int = 0
 
     @property
     def is_remote(self) -> bool:
@@ -248,6 +250,8 @@ class SwarmAgent:
             "attempt": self.attempt,
             "cancel_requested": self.cancel_requested,
             "workspace": self.workspace,
+            "resume_count": self.resume_count,
+            "checkpoint_stage": self.checkpoint.get("stage", ""),
         }
 
 

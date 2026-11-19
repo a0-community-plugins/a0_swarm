@@ -20,7 +20,7 @@ When `subagent_workspace` is `inherit` or `isolated`, each sub **already starts 
 
 When `subagent_workspace=isolated`, the worker's worktree and branch remain for review, including uncommitted files. Do not claim all work is committed or remove the checkout automatically.
 
-If the tool reports Needs review, inspect that run in the Swarm panel. Do not create a replacement run or silently retry uncertain actions. Use `run_id` to reattach. Completed results survive restart; arbitrary interrupted local model/tool execution is held rather than replayed.
+If the tool reports Needs review, inspect that run in the Swarm panel. Do not create a replacement run or silently retry uncertain actions. Use `run_id` to reattach. Completed results survive restart. Local workers warm-resume from supported checkpoints and reuse saved model/tool results. Prefer swarm_execute for finite local commands; it reconnects to the original command after a server restart. Unknown ordinary-tool outcomes remain held for review. A restarted parent collects with run_id rather than admitting a replacement run.
 
 Example:
 ~~~json

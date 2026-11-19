@@ -1,4 +1,4 @@
-"""Own workers independently of a parent tool's wait. No model/tool replay."""
+"""Own workers independently of a parent wait and resume committed progress."""
 from __future__ import annotations
 
 import asyncio
@@ -80,8 +80,7 @@ class Coordinator:
             elif entry.phase == "queued":
                 await self.local(entry)
             else:
-                reg.transition(entry.agent_name, entry.attempt, Status.REVIEW,
-                               blocker="Local execution has no verified checkpoint-resume backend.")
+                await self.resume(entry)
         except asyncio.CancelledError:
             raise
         except RecoveryHold as exc:
@@ -94,7 +93,7 @@ class Coordinator:
             reg.finish_run(entry.run_id)
 
     async def local(self, entry):
-        from agent import AgentContext, AgentContextType, UserMessage
+        from agent import AgentContext, AgentContextType
         from initialize import initialize_agent
         from helpers import persist_chat, projects, subagents
         from . import workspace
@@ -128,11 +127,31 @@ class Coordinator:
         def ownership(value):
             if not reg.transition(entry.agent_name, entry.attempt, Status.WORKING, workspace=value):
                 raise RuntimeError("Workspace ownership changed")
-        ws = workspace.setup(entry.spec["workspace_mode"], entry.spec.get("project"), ctx, entry.run_id, entry.spec["slot"], ownership=ownership)
+        workspace.setup(entry.spec["workspace_mode"], entry.spec.get("project"), ctx, entry.run_id, entry.spec["slot"], ownership=ownership)
         persist_chat.save_tmp_chat(ctx)
         if not reg.transition(entry.agent_name, entry.attempt, Status.WORKING, phase="local_started"):
             return
 
+        await self.run_local(entry, ctx, initial=True)
+
+    async def resume(self, entry):
+        from agent import AgentContext
+        from .checkpoints import SAFE_STAGES
+        if entry.checkpoint.get("stage") not in SAFE_STAGES:
+            raise RecoveryHold("No confirmed continuation point is available; inspect the interrupted action.")
+        ctx = AgentContext.get(entry.context_id)
+        if ctx is None or AgentContext.get(entry.parent_context_id) is None:
+            raise RecoveryHold("Saved worker or parent chat is unavailable")
+        if ctx.is_running():
+            raise RecoveryHold("Worker context is already running outside this coordinator")
+        self.registry.begin_resume(entry.agent_name, entry.attempt)
+        await self.run_local(self.registry.get_agent(entry.agent_name), ctx, initial=False)
+
+    async def run_local(self, entry, ctx, *, initial):
+        from agent import LoopData, UserMessage
+        from helpers import persist_chat
+        from . import checkpoints, command_jobs
+        reg = self.registry
         started = threading.Event()
         exited = threading.Event()
 
@@ -140,21 +159,62 @@ class Coordinator:
             started.set()
             try:
                 if reg.get_agent(entry.agent_name).cancel_requested:
-                    reg.transition(entry.agent_name, entry.attempt, Status.CANCELLED, phase="cancelled")
+                    checkpoint = reg.get_agent(entry.agent_name).checkpoint
+                    confirmed = not checkpoint.get("job_id") or await command_jobs.cancel(checkpoint["job_id"])
+                    reg.transition(entry.agent_name, entry.attempt, Status.CANCELLED if confirmed else Status.CANCEL_REQUESTED,
+                                   phase="cancelled" if confirmed else "local_started")
                     return
-                ctx.agent0.hist_add_user_message(UserMessage(message=entry.task))
-                result = await ctx.agent0.monologue()
+                if initial:
+                    ctx.agent0.hist_add_user_message(UserMessage(message=(
+                        entry.task + "\n\n[Swarm execution: prefer swarm_execute for finite local batch commands. "
+                        "It preserves command receipts across Agent Zero restarts. Use normal tools for interactive or remote sessions.]"
+                    )))
+                else:
+                    checkpoint = entry.checkpoint
+                    checkpoints.restore(ctx.agent0, checkpoint)
+                    if checkpoint["stage"] == "durable_tool":
+                        ctx.agent0.loop_data = LoopData(user_message=ctx.agent0.last_user_message)
+                        for key, value in checkpoint.get("loop", {}).items():
+                            setattr(ctx.agent0.loop_data, key, value)
+                        args = checkpoint["tool_args"]
+                        cwd = checkpoint.get("cwd")
+                        if not cwd:
+                            raise RecoveryHold("Command was interrupted before its workspace was recorded")
+                        command_jobs.prepare(checkpoint["job_id"], runtime=args.get("runtime", "terminal"),
+                                             code=args.get("code", ""), cwd=cwd, timeout=args.get("timeout", 600))
+                        receipt = await command_jobs.wait(checkpoint["job_id"])
+                        extra = {}
+                        if checkpoint.get("call_id"):
+                            from helpers.llm_result import function_call_output_item
+                            extra["_responses_output_item"] = function_call_output_item(checkpoint["call_id"], command_jobs.format_result(receipt))
+                        ctx.agent0.hist_add_tool_result("swarm_execute", command_jobs.format_result(receipt),
+                                                       id=checkpoint.get("tool_log_id", ""), **extra)
+                        await checkpoints.capture(ctx.agent0, "ready")
+                reg.transition(entry.agent_name, entry.attempt, Status.WORKING, phase="local_started",
+                               current_activity="Continuing saved progress" if not initial else "Thinking...", blocker="")
+                result = entry.checkpoint.get("result", "") if not initial and entry.checkpoint.get("stage") == "final" else await ctx.agent0.monologue()
                 text = str(result or "")
-                if ws.mode == "isolated":
-                    text = f"[Workspace retained: {ws.project_name}; branch {ws.branch}. Inspect uncommitted changes before merging.]\n" + text
+                workspace = reg.get_agent(entry.agent_name).workspace
+                if workspace.get("mode") == "isolated":
+                    text = f"[Workspace retained: {workspace.get('project_name')}; branch {workspace.get('branch')}. Inspect uncommitted changes before merging.]\n" + text
                 cap = entry.spec["result_cap"]
                 text = text.encode()[:cap].decode(errors="ignore")
                 reg.transition(entry.agent_name, entry.attempt, Status.DONE, phase="completed", result=text, current_activity="")
             except asyncio.CancelledError:
-                reg.transition(entry.agent_name, entry.attempt, Status.CANCELLED, phase="cancelled", blocker="Local worker stopped. External effects and workspace changes are retained.")
+                checkpoint = reg.get_agent(entry.agent_name).checkpoint
+                confirmed = not checkpoint.get("job_id") or await command_jobs.cancel(checkpoint["job_id"])
+                reg.transition(entry.agent_name, entry.attempt, Status.CANCELLED if confirmed else Status.CANCEL_REQUESTED,
+                               phase="cancelled" if confirmed else "local_started",
+                               blocker="Local worker stopped. External effects and workspace changes are retained." if confirmed else "Command cancellation is not confirmed; retained work requires inspection.")
                 raise
+            except RecoveryHold as exc:
+                checkpoint = reg.get_agent(entry.agent_name).checkpoint
+                reg.save_checkpoint(entry.agent_name, entry.attempt, {**checkpoint, "stage": "uncertain"})
+                reg.transition(entry.agent_name, entry.attempt, Status.REVIEW, blocker=str(exc), current_activity="")
+            except checkpoints.WorkerInterrupted:
+                reg.recover_after_error(entry.agent_name, entry.attempt)
             except Exception:
-                reg.transition(entry.agent_name, entry.attempt, Status.REVIEW, blocker="Local worker stopped without a confirmed result; inspect retained work.")
+                reg.recover_after_error(entry.agent_name, entry.attempt)
             finally:
                 try:
                     persist_chat.save_tmp_chat(ctx)
@@ -229,6 +289,11 @@ class Coordinator:
         else:
             from agent import AgentContext
             ctx = AgentContext.get(entry.context_id)
+            if entry.checkpoint.get("job_id"):
+                from .command_jobs import cancel
+                if await cancel(entry.checkpoint["job_id"]):
+                    reg.transition(entry.agent_name, entry.attempt, Status.CANCELLED, phase="cancelled")
+                    return
             if ctx and ctx.is_running():
                 ctx.kill_process()
             elif entry.phase == "queued":
