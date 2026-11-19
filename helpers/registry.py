@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import threading
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -24,6 +25,9 @@ class SwarmAgentStatus(str, Enum):
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    REVIEW = "needs_review"
+    CANCEL_REQUESTED = "cancel_requested"
+    RECOVERING = "recovering"
 
 
 TERMINAL = {SwarmAgentStatus.DONE, SwarmAgentStatus.FAILED, SwarmAgentStatus.CANCELLED}
@@ -45,6 +49,11 @@ class SwarmRun:
     started_at: str
     finished_at: str = ""
     title: str = ""
+    request_id: str = ""
+    spec_digest: str = ""
+    result: str = ""
+    collected: bool = False
+    hidden: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -55,6 +64,9 @@ class SwarmRun:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "title": self.title,
+            "result": self.result,
+            "collected": self.collected,
+            "hidden": self.hidden,
         }
 
 
@@ -190,6 +202,15 @@ class SwarmAgent:
     live_output: str = ""
     live_reasoning: str = ""
     last_tool_name: str = ""
+    spec: dict = field(default_factory=dict)
+    workspace: dict = field(default_factory=dict)
+    attempt: int = 1
+    phase: str = "queued"
+    deadline: float = 0
+    retries: int = 0
+    next_wake: float = 0
+    generation: int = 0
+    cancel_requested: bool = False
 
     @property
     def is_remote(self) -> bool:
@@ -223,12 +244,16 @@ class SwarmAgent:
             "live_output": self.live_output,
             "live_reasoning": self.live_reasoning,
             "last_tool_name": self.last_tool_name,
+            "phase": self.phase,
+            "attempt": self.attempt,
+            "cancel_requested": self.cancel_requested,
+            "workspace": self.workspace,
         }
 
 
 class SwarmRegistry:
     _instance: "SwarmRegistry | None" = None
-    _class_lock = threading.Lock()
+    _class_lock = vars(sys).setdefault("_a0_swarm_registry_lock", threading.Lock())
 
     def __init__(self) -> None:
         self._agents: dict[str, SwarmAgent] = {}
@@ -243,7 +268,9 @@ class SwarmRegistry:
         if cls._instance is None:
             with cls._class_lock:
                 if cls._instance is None:
-                    cls._instance = cls()
+                    from usr.plugins.a0_swarm.helpers.durable_registry import DurableRegistry
+                    cls._instance = getattr(sys, "_a0_swarm_registry", None) or DurableRegistry.open()
+                    sys._a0_swarm_registry = cls._instance
         return cls._instance
 
     def register(self, agent: SwarmAgent) -> None:

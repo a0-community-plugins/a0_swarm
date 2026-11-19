@@ -14,6 +14,8 @@ def _snapshot_payload(parent: str | None = None) -> dict:
     snap = SwarmRegistry.get().snapshot(parent_ctx_id=parent or None)
     return {
         "parent_context_id": parent,
+        "revision": snap.get("revision", 0),
+        "generation": snap.get("generation", 0),
         "runs": snap["runs"],
         "agents": snap["agents"],
     }

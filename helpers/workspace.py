@@ -198,28 +198,15 @@ class Workspace:
         self.branch = branch              # the sub's branch (isolated) -- surfaced for merging
 
     def teardown(self):
-        try:
-            projects.deactivate_project(self.sub_ctx_id, mark_dirty=False)
-        except Exception:
-            pass
-        if not self.owns_project:
-            return  # 'none'/'inherit': never delete the parent's (or no) project
-        try:
-            if self.delegated:
-                mod = a0_worktree_contract()
-                if mod is not None:
-                    mod.remove_worktree(self.key)
-                    return
-                # contract vanished mid-run -> best-effort inline removal of OUR OWN dir
-            _inline_remove_worktree(self.key, self.repo_path)
-        except Exception as e:
-            logger.warning("workspace teardown failed for key=%s: %s", self.key, e)
+        # Recovery custody outlives an invocation. Even a successful worker can
+        # have uncommitted files; cleanup is an explicit owner action.
+        return
 
 
 # ------------------------------------------------------------------------------------------------
 # setup -- called in execute() BEFORE the sub's monologue (so the project is active for its cwd)
 # ------------------------------------------------------------------------------------------------
-def setup(mode, parent_project, sub_ctx, run_id, index) -> Workspace:
+def setup(mode, parent_project, sub_ctx, run_id, index, ownership=None) -> Workspace:
     mode = (mode or "none").strip().lower()
     if mode not in ("none", "inherit", "isolated"):
         logger.warning("unknown subagent_workspace=%r; treating as none", mode)
@@ -244,6 +231,8 @@ def setup(mode, parent_project, sub_ctx, run_id, index) -> Workspace:
     for _ in range(3):  # retry on (rare) key/path collision -- never overwrite
         key = _new_key(run_id, index)
         branch = f"swarm/{key}"
+        if ownership:
+            ownership({"key": key, "repo_path": repo_path, "branch": branch, "context_id": sub_ctx.id, "run_id": run_id, "retained": True})
         mod = a0_worktree_contract()
         if mod is not None:
             try:
@@ -283,18 +272,8 @@ def _activate_inherit(parent_project, sub_ctx) -> Workspace:
 # Scoped strictly to our ownership marker (foreign worktrees are invisible to this).
 # ------------------------------------------------------------------------------------------------
 def sweep_orphans(active_context_ids):
-    try:
-        parent = projects.get_projects_parent_folder()
-        if not os.path.isdir(parent):
-            return
-        active = set(active_context_ids or [])
-        for name in os.listdir(parent):
-            marker = _read_marker(name)
-            if marker is None:
-                continue  # not ours -> leave alone
-            ctx = marker.get("ctx_id")
-            if ctx and ctx in active:
-                continue  # still in use
-            _inline_remove_worktree(name, marker.get("repo_path"))
-    except Exception as e:
-        logger.warning("sweep_orphans failed: %s", e)
+    """A missing live context does not establish orphanhood after restart.
+
+    Recovery workspaces are retained until explicitly reviewed by their owner.
+    """
+    return

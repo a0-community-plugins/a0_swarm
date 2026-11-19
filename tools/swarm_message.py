@@ -23,7 +23,8 @@ class SwarmMessageTool(Tool):
             return Response(message="swarm_message failed: sender is not registered in a swarm run.", break_loop=False)
 
         try:
-            msg = reg.create_message(
+            reply = delivery.capture_pending_reply(self.agent, content) if recipient == "orchestrator" else None
+            msg = reply or reg.create_message(
                 sender_entry.run_id,
                 sender_name,
                 recipient,

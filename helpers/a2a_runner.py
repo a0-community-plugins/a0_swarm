@@ -115,7 +115,11 @@ async def submit_task(remote: RemoteEndpoint, content: str) -> Tuple["AgentConne
     polling/cancelling is no longer needed.
     """
     conn = await open_connection(remote)
-    response = await conn.send_message(message=content)
+    try:
+        response = await conn.send_message(message=content)
+    except BaseException:
+        await conn.close()
+        raise
     # Response shape: {"result": {"id": "<task_id>", "context_id": "...", ...}}
     result = (response or {}).get("result") or {}
     task_id = str(result.get("id") or "")
@@ -139,8 +143,8 @@ async def wait_for_result(conn: "AgentConnection", task_id: str,
     except TimeoutError:
         return ("timeout", "")
     except Exception as e:
-        logger.exception("A2A poll failed for task %s", task_id)
-        return ("failed", str(e))
+        logger.warning("A2A poll failed for task %s", task_id)
+        return ("unknown", "Remote status could not be confirmed")
 
     task = (task_info or {}).get("result") or {}
     state = (task.get("status") or {}).get("state") or "unknown"
@@ -167,10 +171,13 @@ async def cancel_task(remote: RemoteEndpoint, task_id: str) -> bool:
     except Exception:
         return False
     try:
-        await conn._a2a_client.cancel_task(task_id)  # type: ignore[attr-defined]
-        return True
+        response = await conn._a2a_client.cancel_task(task_id)  # type: ignore[attr-defined]
+        if hasattr(response, "model_dump"):
+            response = response.model_dump()
+        result = (response or {}).get("result") or {}
+        return (result.get("status") or {}).get("state") in ("canceled", "cancelled")
     except Exception as e:
-        logger.warning("A2A cancel failed for task %s on %s: %s", task_id, remote.base_url, e)
+        logger.warning("A2A cancellation unconfirmed for task %s", task_id)
         return False
     finally:
         try:
@@ -189,7 +196,7 @@ async def send_intervention(remote: RemoteEndpoint, content: str, context_id: st
         await conn.send_message(message=content, context_id=context_id or None)
         return True
     except Exception as e:
-        logger.warning("A2A intervention failed on %s: %s", remote.base_url, e)
+        logger.warning("A2A intervention outcome unconfirmed")
         return False
     finally:
         try:

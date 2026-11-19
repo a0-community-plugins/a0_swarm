@@ -10,6 +10,8 @@ class SwarmStatus(ApiHandler):
         snap = SwarmRegistry.get().snapshot(parent_ctx_id=parent)
         return {
             "parent_context_id": parent,
+            "revision": snap.get("revision", 0),
+            "generation": snap.get("generation", 0),
             "runs": snap["runs"],
             "agents": snap["agents"],
         }

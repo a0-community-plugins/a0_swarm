@@ -6,7 +6,9 @@ All tasks in one `delegate_parallel` call share a single swarm run. Agents in th
 Use one orchestration layer at a time. Do not call this tool from an A0 Swarm worker or while Agent Harness is active in the same chat. Fan-out is bounded by plugin settings (four tasks by default, never more than 16).
 
 Args:
-- `tasks` (list, required): array of task objects. Each object:
+- `request_id` (string): stable unique identity for a new run; reuse exactly when retrying the same admission.
+- `run_id` (string): reattach to an existing run or collect its results; omit tasks in this mode.
+- `tasks` (list, required for a new run): array of task objects. Each object:
   - `label` (string, required): human-readable name shown in the swarm panel (e.g. "Researcher", "Code Writer").
   - `task` (string, required): full task description for that agent.
   - `profile` (string, optional): Agent Zero profile for a local subagent.
@@ -16,7 +18,9 @@ Returns: a structured markdown summary of all agent results once every agent com
 
 When `subagent_workspace` is `inherit` or `isolated`, each sub **already starts in the correct directory** (its activated project / worktree). Do NOT put an absolute `cd /a0/usr/projects/...` into a sub's `task` — phrase the work to run in the sub's **current** directory. A hardcoded `cd` makes the sub leave its workspace and write into the shared checkout, defeating isolation.
 
-When `subagent_workspace=isolated`, each sub edits its own git worktree of the parent's repo and its result begins with a `[workspace: committed to branch ... in repo ...]` line. That branch lives in the **parent repo's** `.git` and holds the sub's committed work — the temporary worktree checkout is removed afterward but the **branch persists and is mergeable**. Report these branches to the user as work to merge; do NOT describe them as ephemeral or as "not landing in the repo."
+When `subagent_workspace=isolated`, the worker's worktree and branch remain for review, including uncommitted files. Do not claim all work is committed or remove the checkout automatically.
+
+If the tool reports Needs review, inspect that run in the Swarm panel. Do not create a replacement run or silently retry uncertain actions. Use `run_id` to reattach. Completed results survive restart; arbitrary interrupted local model/tool execution is held rather than replayed.
 
 Example:
 ~~~json
@@ -24,6 +28,7 @@ Example:
   "thoughts": ["I'll split this into research and implementation tasks."],
   "tool_name": "delegate_parallel",
   "tool_args": {
+    "request_id": "research-implementation-1",
     "tasks": [
       {"label": "Researcher", "task": "Research the top 5 Python async frameworks and summarize their tradeoffs."},
       {"label": "Implementer", "task": "Write a working FastAPI hello-world server with JWT auth."}
