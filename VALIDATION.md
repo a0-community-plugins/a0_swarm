@@ -23,6 +23,29 @@ The first live worker declined the worker-only command because its generic Agent
 Zero prompt described a parent role. No command ran. The plugin now supplies an
 explicit runtime worker role; acceptance after that correction is recorded below.
 
+The corrected candidate was installed through the normal Plugin Hub update API
+in the launcher instance at `http://127.0.0.1:60030/`, Agent Zero v2.16 at core
+`2b0b3a416d80638379dc575798a4174ab4d3e1d9`. Its configured provider-backed worker
+started one `swarm_execute` Python command, wrote a marker, and waited. The normal
+restart API changed the server PID while the original detached command stayed
+alive. Startup restored the worker automatically; it consumed the original
+command receipt and returned `SWARM_WARM_RECOVERED_20261118`.
+
+- Same worker context `EhFYcgz2`, attempt **1**, recovery count **1**.
+- Command completed with exit code **0**; marker content remained exactly **x**.
+- The aggregate result was ready to collect; all contexts were idle afterward.
+- Native Responses history and provider state were retained in the checkpoint.
+  Provider cache hits and latency savings were not measured.
+- After browser reload, the panel showed **Done / Attempt 1 / Recovered 1**.
+  Swarm was the only visible canvas surface; the console had no errors.
+- CI passed on Python 3.11, 3.12 and 3.13. No remote A2A provider, machine power
+  loss, storage loss or interactive-session restoration was tested.
+
+The one corrected live run is the restart acceptance check. It was not repeated
+after passing. The first declined command and initial fixture path correction
+remain documented above rather than being counted as successful checks.
+
+
 ## Live integration correction (2.1.1)
 
 On November 18, 2026, the published plugin was installed through the Plugin Hub
