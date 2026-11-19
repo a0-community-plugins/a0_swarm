@@ -11,6 +11,7 @@ Own bounded local/A2A delegation and durable swarm orchestration.
 - `helpers/execution.py` owns worker scheduling and bounded same-attempt recovery. The framework owns each local task.
 - `helpers/checkpoints.py` and worker-only extension hooks own versioned continuation snapshots, model/final receipts, host fingerprint checks, and dispatch invalidation. Never infer tool success from chat history.
 - `helpers/command_jobs.py` owns immutable batch admission and reconnect; the standalone `command_runner.py` owns its OS lock, dispatch marker, output, cancellation and terminal receipt.
+- The worker system-prompt hook explicitly identifies the delegated role, even though each TASK context owns an agent zero loop.
 - Workers use persisted `AgentContextType.TASK`; core deliberately excludes `BACKGROUND` contexts from chat persistence. Restored chats remain inert until the journal permits work.
 - `helpers/recovery.py` and plugin extensions restore context ownership after chat restoration and reconcile from the job loop.
 - Function hooks for synchronous `initialize_chats` and `toggle_plugin` use synchronous `execute`; chat restoration attaches its callback to the returned deferred task.

@@ -19,7 +19,9 @@ Plugin version: 2.2.0. This file records validation evidence; GitHub records pub
   command prevention, missing runner outcomes, cancellation before dispatch, and
   exiting the framework retry loop when tool effects are unknown.
 
-Live provider-backed acceptance is recorded below after installing the candidate.
+The first live worker declined the worker-only command because its generic Agent
+Zero prompt described a parent role. No command ran. The plugin now supplies an
+explicit runtime worker role; acceptance after that correction is recorded below.
 
 ## Live integration correction (2.1.1)
 
