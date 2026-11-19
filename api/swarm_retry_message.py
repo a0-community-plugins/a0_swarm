@@ -25,6 +25,10 @@ class SwarmRetryMessage(ApiHandler):
         if msg.delivery_state == "delivered":
             return {"ok": True, "message_id": message_id, "delivery_state": "delivered", "error": ""}
 
+        if msg.delivery_state in ("uncertain", "sending") and data.get("acknowledge_duplicate_risk") is not True:
+            return {"ok": False, "error": "Delivery is uncertain; explicit duplication-risk acknowledgement is required"}
+        if msg.delivery_state == "sending":
+            return {"ok": False, "error": "Delivery is still in progress"}
         reg.mark_message_queued(message_id)
         result = await delivery.deliver_message(message_id)
         return {

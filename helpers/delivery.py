@@ -5,7 +5,6 @@ from typing import Any
 
 from agent import AgentContext, UserMessage
 from usr.plugins.a0_swarm.helpers.registry import SwarmMessage, SwarmRegistry
-from usr.plugins.a0_swarm.helpers.remotes import RemoteEndpoint
 from usr.plugins.a0_swarm.helpers import a2a_runner
 
 
@@ -92,9 +91,10 @@ def capture_pending_reply(agent: Any, content: str) -> SwarmMessage | None:
 
     source_id = str(selected.get("message_id") or "")
     source = reg.get_message(source_id) if source_id else None
-    if source is None or source.delivery_state != "delivered":
+    if source is None or source.delivery_state not in ("delivered", "uncertain"):
         return None
 
+    reg.mark_message_delivered(source_id)
     pending.pop(selected_index)
     _set_pending_replies(agent, pending)
 
@@ -110,6 +110,8 @@ async def deliver_message(message_id: str) -> DeliveryResult:
         return DeliveryResult(False, "failed", "message not found", message_id)
     if msg.delivery_state == "delivered":
         return DeliveryResult(True, "delivered", "", message_id)
+    if msg.delivery_state in ("sending", "uncertain"):
+        return DeliveryResult(False, msg.delivery_state, "Delivery outcome requires review", message_id)
     if msg.recipient == "orchestrator":
         reg.mark_message_delivered(message_id)
         return DeliveryResult(True, "delivered", "", message_id)
@@ -120,6 +122,10 @@ async def deliver_message(message_id: str) -> DeliveryResult:
         reg.mark_message_failed(message_id, reason)
         return DeliveryResult(False, "failed", reason, message_id)
 
+    if target.cancel_requested or target.status.value not in ("working", "blocked", "recovering"):
+        return DeliveryResult(False, "queued", "Worker is not available for delivery", message_id)
+    if not reg.claim_message(message_id):
+        return DeliveryResult(False, "sending", "Delivery is already claimed", message_id)
     if target.delivery_mode == "remote_a2a" or target.is_remote:
         return await _deliver_remote(reg, msg, target)
     return await _deliver_local(reg, msg, target)
@@ -132,11 +138,38 @@ async def _deliver_local(reg: SwarmRegistry, msg, target) -> DeliveryResult:
         reg.mark_message_failed(msg.message_id, reason)
         return DeliveryResult(False, "failed", reason, msg.message_id)
 
-    runtime_agent = ctx.get_agent()
-    reg.mark_message_delivered(msg.message_id)
-    _queue_reply_capture(runtime_agent, msg, target.agent_name)
-    ctx.communicate(UserMessage(message=_format_payload(msg.sender, msg.content)))
-    return DeliveryResult(True, "delivered", "", msg.message_id)
+    task = ctx.task
+    if task is None:
+        reg.mark_message_queued(msg.message_id)
+        return DeliveryResult(False, "queued", "Worker has no active task", msg.message_id)
+
+    def handoff():
+        # Run on the worker's event loop, without calling communicate(): that
+        # method can start a new turn if the worker finishes during delivery.
+        with reg._rlock:
+            current = reg.get_agent(target.agent_name)
+            runtime_agent = ctx.streaming_agent or ctx.agent0
+            if (current is None or current.attempt != target.attempt
+                    or current.context_id != ctx.id or current.cancel_requested
+                    or current.phase != "local_started"
+                    or current.status.value not in ("working", "blocked")
+                    or ctx.task is not task or not task.is_alive()
+                    or runtime_agent.intervention is not None):
+                reg.mark_message_queued(msg.message_id)
+                return DeliveryResult(False, "queued", "Worker is not ready for a handoff", msg.message_id)
+            reason = "Local handoff has no durable receipt; awaiting a worker reply."
+            reg._mark_message_state(msg.message_id, "uncertain", reason)
+            _queue_reply_capture(runtime_agent, msg, target.agent_name)
+            ctx.paused = False
+            runtime_agent.intervention = UserMessage(message=_format_payload(msg.sender, msg.content))
+            return DeliveryResult(True, "uncertain", reason, msg.message_id)
+
+    try:
+        return await task.execute_inside(handoff)
+    except Exception:
+        reason = "Local handoff could not be confirmed; review before retrying."
+        reg._mark_message_state(msg.message_id, "uncertain", reason)
+        return DeliveryResult(False, "uncertain", reason, msg.message_id)
 
 
 async def _deliver_remote(reg: SwarmRegistry, msg, target) -> DeliveryResult:
@@ -149,23 +182,19 @@ async def _deliver_remote(reg: SwarmRegistry, msg, target) -> DeliveryResult:
         reg.mark_message_failed(msg.message_id, reason)
         return DeliveryResult(False, "failed", reason, msg.message_id)
 
-    remote = RemoteEndpoint(
-        label=target.remote_label or target.agent_name,
-        base_url=target.remote_base_url,
-        auth_token=getattr(target, "remote_auth_token", ""),
-    )
-    ok = await a2a_runner.send_intervention(
-        remote,
-        _format_payload(msg.sender, msg.content),
-        context_id=target.context_id,
-    )
+    from .execution import resolve_remote
+    try:
+        remote = resolve_remote(target)
+        ok = await a2a_runner.send_intervention(remote, _format_payload(msg.sender, msg.content), context_id=target.context_id)
+    except Exception:
+        ok = False
     if ok:
         reg.mark_message_delivered(msg.message_id)
         return DeliveryResult(True, "delivered", "", msg.message_id)
 
-    reason = f"remote intervention failed for {target.remote_label or target.remote_base_url}"
-    reg.mark_message_failed(msg.message_id, reason)
-    return DeliveryResult(False, "failed", reason, msg.message_id)
+    reason = "Remote delivery could not be confirmed; it may have been accepted."
+    reg._mark_message_state(msg.message_id, "uncertain", reason)
+    return DeliveryResult(False, "uncertain", reason, msg.message_id)
 
 
 async def deliver_queued_for_agent(agent_name: str) -> list[DeliveryResult]:

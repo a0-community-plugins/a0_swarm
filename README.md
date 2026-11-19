@@ -2,10 +2,10 @@
 
 A0 Swarm gives Agent Zero a bounded parallel-delegation tool and a live,
 chat-scoped mission-control panel. A parent agent can send independent tasks
-to local background agents or configured Agent Zero remotes over A2A, collect
+to local managed workers or configured Agent Zero remotes over A2A, collect
 their results, exchange messages, and cancel work.
 
-Version 2.0 hardens the original plugin around three operating rules:
+Version 2.1 adds durable orchestration while preserving three operating rules:
 
 - fan-out is finite: four workers by default and 16 at the absolute ceiling;
 - every panel snapshot and control action is scoped to the active chat;
@@ -77,8 +77,9 @@ automatically mean separate filesystems.
 `isolated` falls back to `inherit` when the active project is not a Git
 repository. It uses the `a0_worktree` plugin when that plugin exposes its
 versioned ownership contract; otherwise A0 Swarm manages only worktrees marked
-as its own. The temporary checkout is removed after the task, but its branch
-remains in the parent repository for review and merge. Selecting this mode
+as its own. The checkout and its branch are retained after the task, including
+dirty and untracked files. Review them before merging or explicitly removing the
+owned worktree. Selecting this mode
 therefore authorizes those worktree and branch mutations for swarm tasks.
 
 ## Remote Agent Zero workers
@@ -125,9 +126,60 @@ and completion state ambiguous.
 | `subagent_workspace` | `none` | `none`, `inherit`, or `isolated`. |
 | `remotes` | `[]` | A2A label, base URL, and optional token records. |
 
-The registry is process memory, not durable chat history. Restarting Agent Zero
-clears live swarm state. Remote tokens remain in local plugin configuration and
-are never included in panel snapshots.
+Swarm control state is committed to SQLite under
+`usr/plugin_data/a0_swarm/swarm.sqlite`. This directory must be on persistent,
+local storage. One Agent Zero process owns it; shared/network filesystems and
+multiple coordinators are not supported. No additional Python package is needed.
+Remote tokens stay in scoped plugin configuration and are resolved at use time;
+credential-bearing URLs are rejected. Per-token previews remain transient.
+
+## Restart recovery
+
+Admission, dispatch intent, task IDs, cancellation requests, messages, results,
+and workspace references survive a process restart. Queued work resumes after
+ownership is restored. Known remote task IDs reconnect to the same task, with
+persisted deadlines and bounded retries. Completed workers are never rerun to
+reconstruct a result.
+
+Interrupted local workers and remote sends without a recorded task ID show
+**Needs review**. A timeout does not prove an action failed. This release provides
+durable orchestration, not arbitrary local model/tool checkpoint replay. It does
+not install or activate a separate durability engine. Full local turn resumption
+requires a separately verified backend integration.
+
+Use the panel to check a known remote task, collect a completed result, or request
+cancellation. Cancellation stays **Cancel requested** until confirmed. If checks
+are exhausted, inspect the retained worker and request cancellation again as
+needed. An explicit retry of uncertain work warns that previous effects may be
+duplicated; it creates a new attempt and preserves the previous attempt's context
+and workspace reference in the timeline.
+
+Supply a stable `request_id` to `delegate_parallel` and reuse it for an admission
+retry. A conflicting task payload rejects. Without one, the framework invocation
+log ID identifies that call only; a new invocation is a new request. To reattach
+or collect later, call with `run_id` alone. Result collection is repeatable; it
+does not guarantee exactly-once insertion into a parent's chat history.
+
+Messages are journaled before delivery. An interrupted send becomes **Delivery
+uncertain** and is never automatically resent. Local handoff awaits a worker reply
+as acknowledgement because ordinary chat interventions have no durable admission
+receipt. Remote receipt acknowledges transport acceptance, not completion of the
+requested work. Review before retrying an uncertain message.
+
+Clear-completed hides terminal runs while retaining deduplication receipts; runs
+with unresolved messages remain visible. Update, disable, and uninstall require
+active workers to stop and preserve the journal, chats, and workspaces. Missing
+live contexts are never grounds for automatic worktree deletion. Retention is
+explicit in this release; monitor storage usage and remove data only after its
+parent chats and external work are no longer resumable.
+
+## Design references
+
+The admission/intent/outcome boundaries were informed by
+[Alessandro's Durable Execution plugin](https://github.com/3clyp50/a0-durable-execution/tree/93097e75706e4b90b003f18c5606faea0d98c2cf).
+Versioned ownership and durable task-state concepts were informed by
+[Pi durable](https://github.com/earendil-works/pi/tree/5a14e69c067d40dfbff4f2fff7d3b34c897e2dc9/packages/durable).
+Neither runtime nor its core overrides are bundled here.
 
 ## Development
 
@@ -139,6 +191,11 @@ node --check webui/swarm-store.js
 node --check extensions/webui/send_message_before/_10_swarm_mentions.js
 python -m compileall -q .
 ```
+
+Run `scripts/verify_framework.py` with the framework interpreter and an isolated
+plugin namespace for the synthetic process-kill lifecycle check. It disables
+extension discovery inside its child fixture and never calls a model provider.
+Use `--delivery` for the focused live-task/stopped-task message-handoff check.
 
 The test suite covers finite fan-out, task validation, nested-orchestrator
 guards, parent-scoped registry state, terminal-state behavior, lifecycle hooks,

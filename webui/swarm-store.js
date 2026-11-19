@@ -17,6 +17,9 @@ const proto = {
     agents: [],
     runs: [],
     selectedRunId: "",
+    revision: -1,
+    generation: -1,
+    collectedResult: "",
     retryingMessageId: "",
     panelOpen: true,
     composingFor: null,
@@ -123,6 +126,9 @@ const proto = {
         const hadSubscription = Boolean(this._subscribedParent);
         this._parentCtxId = nextParent;
         this._subscribedParent = "";
+        this.revision = -1;
+        this.generation = -1;
+        this.collectedResult = "";
         this.runs = [];
         this.agents = [];
         this.selectedRunId = "";
@@ -200,6 +206,9 @@ const proto = {
         if (!Array.isArray(data.runs) || !Array.isArray(data.agents)) return false;
         if (expectedParent !== this._parentCtxId) return false;
 
+        if (data.generation < this.generation || (data.generation === this.generation && data.revision < this.revision)) return false;
+        this.generation = data.generation ?? 0;
+        this.revision = data.revision ?? 0;
         this.runs = data.runs;
         this.agents = data.agents;
         this.loading = false;
@@ -261,15 +270,41 @@ const proto = {
         return (message && message.failure_reason) || "";
     },
 
+    statusLabel(status) {
+        return ({ needs_review: "Needs review", cancel_requested: "Cancel requested", recovering: "Recovering" })[status] || status;
+    },
+
+    async recover(agent, action) {
+        const parent = this._parentCtxId;
+        if (action === "retry" && !globalThis.confirm("The previous attempt may already have made changes or sent requests. Start a new attempt, which may duplicate those effects?")) return;
+        try {
+            const response = await callJsonApi("/plugins/a0_swarm/swarm_recover", {
+                parent_context_id: parent, run_id: agent.run_id,
+                agent_name: agent.agent_name, action,
+                acknowledge_duplicate_risk: action === "retry",
+            });
+            if (parent !== this._parentCtxId) return;
+            if (!response.ok) throw new Error(response.error);
+            if (response.result) this.collectedResult = response.result;
+        } catch (error) {
+            if (parent === this._parentCtxId) this._setError(error, "Recovery action failed");
+        }
+        await this._poll();
+    },
+
     async retryMessage(messageId) {
         if (!messageId) return;
         const parent = this._parentCtxId;
         if (!parent) return;
+        const message = this.agents.flatMap(a => a.messages || []).find(m => m.message_id === messageId);
+        const uncertain = message?.delivery_state === "uncertain";
+        if (uncertain && !globalThis.confirm("Delivery is uncertain. Sending again may duplicate this message. Continue?")) return;
         this.retryingMessageId = messageId;
         try {
             const response = await callJsonApi("/plugins/a0_swarm/swarm_retry_message", {
                 parent_context_id: parent,
                 message_id: messageId,
+                acknowledge_duplicate_risk: uncertain,
             });
             if (response?.ok === false) throw new Error(response.error || "Retry failed");
         } catch (error) {

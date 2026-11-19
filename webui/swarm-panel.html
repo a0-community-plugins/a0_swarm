@@ -311,6 +311,8 @@
         border-color: color-mix(in srgb, var(--color-border) 90%, transparent);
     }
 
+    .a0swarm-card.status-needs_review { border-left-color: var(--color-warning-text); }
+    .a0swarm-card.status-cancel_requested { border-left-color: var(--color-warning-text); }
     .a0swarm-card.status-working   { border-left-color: var(--color-highlight); }
     .a0swarm-card.status-blocked   { border-left-color: var(--color-warning-text); }
     .a0swarm-card.status-done      { border-left-color: #22c55e; }
@@ -1109,6 +1111,13 @@
     </header>
 
     <div class="a0swarm-body">
+        <template x-for="run in $store.swarmStore.runs.filter(r => r.result_ready)" :key="run.run_id">
+            <div class="a0swarm-alert" role="status">
+                <span x-text="'Result ready · ' + run.title"></span>
+                <button class="a0swarm-btn" @click="$store.swarmStore.recover({run_id: run.run_id}, 'collect')">Collect result</button>
+            </div>
+        </template>
+        <div x-show="$store.swarmStore.collectedResult" x-html="$store.swarmStore.renderMd($store.swarmStore.collectedResult)"></div>
 
         <div
             class="a0swarm-alert"
@@ -1173,7 +1182,11 @@
                                 <span class="a0swarm-card__avatar-num"
                                       x-text="$store.swarmStore.slotIndex(agent.agent_name)"></span>
                             </span>
-                            <span class="a0swarm-card__status" x-text="agent.status"></span>
+                            <span class="a0swarm-card__status" x-text="$store.swarmStore.statusLabel(agent.status)"></span>
+                            <span class="a0swarm-card__status" x-text="'Attempt ' + (agent.attempt || 1)"></span>
+                            <button class="a0swarm-btn" x-show="agent.status === 'needs_review' && !agent.cancel_requested && !agent.remote_task_id" @click.stop="$store.swarmStore.recover(agent, 'retry')">Review retry</button>
+                            <button class="a0swarm-btn" x-show="agent.remote_task_id && agent.status === 'needs_review' && !agent.cancel_requested" @click.stop="$store.swarmStore.recover(agent, 'check')">Check status</button>
+
                             <span class="a0swarm-card__label" x-text="agent.label" :title="agent.label"></span>
                             <span class="a0swarm-card__name" x-text="agent.agent_name" :title="agent.agent_name"></span>
                             <span class="a0swarm-card__remote"
@@ -1357,7 +1370,11 @@
                                 <span class="a0swarm-card__avatar-num"
                                       x-text="$store.swarmStore.slotIndex(agent.agent_name)"></span>
                             </span>
-                            <span class="a0swarm-card__status" x-text="agent.status"></span>
+                            <span class="a0swarm-card__status" x-text="$store.swarmStore.statusLabel(agent.status)"></span>
+                            <span class="a0swarm-card__status" x-text="'Attempt ' + (agent.attempt || 1)"></span>
+                            <button class="a0swarm-btn" x-show="agent.status === 'needs_review' && !agent.cancel_requested && !agent.remote_task_id" @click.stop="$store.swarmStore.recover(agent, 'retry')">Review retry</button>
+                            <button class="a0swarm-btn" x-show="agent.remote_task_id && agent.status === 'needs_review' && !agent.cancel_requested" @click.stop="$store.swarmStore.recover(agent, 'check')">Check status</button>
+
                             <span class="a0swarm-card__label" x-text="agent.label" :title="agent.label"></span>
                             <span class="a0swarm-card__name" x-text="agent.agent_name" :title="agent.agent_name"></span>
                             <span class="a0swarm-card__remote"
