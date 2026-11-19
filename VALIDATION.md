@@ -1,7 +1,25 @@
-# Durable orchestration validation
+# Swarm recovery validation
 
 Date: 2026-11-18. Base: `f7b278dd9d107b0663393f1aa48e500618dc54fe`.
-Plugin version: 2.1.1. This file records validation evidence; GitHub records publication status.
+Plugin version: 2.2.0. This file records validation evidence; GitHub records publication status.
+
+## Warm recovery (2.2.0)
+
+- Existing suite plus the first three recovery cases: 27 passed. After refining
+  error handling, the four focused recovery cases passed (1.5 seconds).
+- `scripts/verify_warm_recovery.py --framework /a0` passed with the real Python
+  3.12.4 framework, enabled extension discovery, native Responses function calls,
+  actual tool execution and chat restoration. One worker survived synchronized
+  SIGKILLs after its model receipt and during its command: same context, attempt
+  1, recovery count 2, two model calls total, one command effect. Model output and
+  prompt text were deterministic; this check made no external provider calls.
+- The initial fixture exposed an incorrect native workdir translation. It was
+  corrected before the passing run. No core files or dependencies were changed.
+- The focused cases cover bounded recovery, stale-attempt rejection, duplicate
+  command prevention, missing runner outcomes, cancellation before dispatch, and
+  exiting the framework retry loop when tool effects are unknown.
+
+Live provider-backed acceptance is recorded below after installing the candidate.
 
 ## Live integration correction (2.1.1)
 
@@ -52,9 +70,10 @@ The pre-publication checks used separate temporary copies with the framework
 interpreter. The live integration correction above subsequently installed the
 plugin and restarted the named server. No dependencies were installed.
 
-Full local model/tool checkpoint replay is not implemented or claimed. Interrupted
-local execution holds for review. A separate verified engine integration is
-required to resume those turns. Remote tests use deterministic collaborators;
+Version 2.2 supports the worker checkpoints and finite batch-command adapter
+described in README. Arbitrary in-flight tools, volatile interactive sessions,
+unknown command outcomes and incompatible core changes remain held. The 2.1
+evidence above predates this adapter. Remote tests use deterministic collaborators;
 they establish submit/poll/uncertainty behavior, not acceptance by a real remote.
 
 The pre-publication browser's API and WebSocket collaborators are synthetic. Those checks establish

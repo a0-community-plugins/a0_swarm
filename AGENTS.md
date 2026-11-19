@@ -8,7 +8,9 @@ Own bounded local/A2A delegation and durable swarm orchestration.
 
 - `helpers/durable_store.py` owns the SQLite schema, process lock and generation.
 - `helpers/durable_registry.py` owns transactional admission, receipts and control transitions; `registry.py` is the compatibility/UI projection.
-- `helpers/execution.py` owns worker scheduling and recovery. The framework owns each local task; this plugin does not replay arbitrary model/tool calls.
+- `helpers/execution.py` owns worker scheduling and bounded same-attempt recovery. The framework owns each local task.
+- `helpers/checkpoints.py` and worker-only extension hooks own versioned continuation snapshots, model/final receipts, host fingerprint checks, and dispatch invalidation. Never infer tool success from chat history.
+- `helpers/command_jobs.py` owns immutable batch admission and reconnect; the standalone `command_runner.py` owns its OS lock, dispatch marker, output, cancellation and terminal receipt.
 - Workers use persisted `AgentContextType.TASK`; core deliberately excludes `BACKGROUND` contexts from chat persistence. Restored chats remain inert until the journal permits work.
 - `helpers/recovery.py` and plugin extensions restore context ownership after chat restoration and reconcile from the job loop.
 - Function hooks for synchronous `initialize_chats` and `toggle_plugin` use synchronous `execute`; chat restoration attaches its callback to the returned deferred task.
@@ -20,7 +22,7 @@ Own bounded local/A2A delegation and durable swarm orchestration.
 - Persist admission and dispatch intent before starting work. Publish control changes only after commit; journal failure must never downgrade to memory.
 - Default state lives outside the checkout in `usr/plugin_data/a0_swarm/`; update/uninstall preserve it.
 - A single OS-locked coordinator owns a database. Generation/attempt checks reject stale writes; they cannot fence external side effects.
-- Unknown local execution or remote submission outcomes require review. Only a known remote task ID permits automatic reconnect. Retry and cancellation checks have persisted limits.
+- Resume local workers only from supported portable checkpoints (maximum 8 MiB, three automatic recoveries per attempt). Reuse recorded model results and durable command receipts. Unknown ordinary tools, partial native batches, missing command outcomes and unknown remote submissions require review. Only a known remote task ID permits remote reconnect.
 - Save no remote tokens or credential-bearing endpoint URLs. Resolve current scoped credentials and verify endpoint identity before reconnecting.
 - Workspace cleanup is explicit; neither a missing live context nor a retained branch proves dirty files are disposable.
 - Hide completed runs without deleting admission receipts. Keep unresolved messages visible.
@@ -29,7 +31,8 @@ Own bounded local/A2A delegation and durable swarm orchestration.
 
 ## Work Guidance
 
-- Full local checkpoint resumption requires a separately verified engine adapter; do not imply it from a saved registry or chat.
+- The built-in adapter supports current single-agent framework loops and finite `swarm_execute` commands. Preserve native Responses metadata and cache eligibility; never promise a provider cache hit or restore volatile interactive sessions.
+- Checkpoints contain private conversation data; expose only stage/count in the panel. Keep command files and receipts private. Parent result collection remains explicit after a parent restart.
 - Keep control updates transactional. Per-token previews and usage counters may be transient.
 - Update README and tool prompts with user-visible behavior. Do not add packages for SQLite.
 

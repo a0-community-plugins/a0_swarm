@@ -5,7 +5,7 @@ chat-scoped mission-control panel. A parent agent can send independent tasks
 to local managed workers or configured Agent Zero remotes over A2A, collect
 their results, exchange messages, and cancel work.
 
-Version 2.1 adds durable orchestration while preserving three operating rules:
+Version 2.2 adds warm worker recovery while preserving three operating rules:
 
 - fan-out is finite: four workers by default and 16 at the absolute ceiling;
 - every panel snapshot and control action is scoped to the active chat;
@@ -144,11 +144,37 @@ ownership is restored. Known remote task IDs reconnect to the same task, with
 persisted deadlines and bounded retries. Completed workers are never rerun to
 reconstruct a result.
 
-Interrupted local workers and remote sends without a recorded task ID show
-**Needs review**. A timeout does not prove an action failed. This release provides
-durable orchestration, not arbitrary local model/tool checkpoint replay. It does
-not install or activate a separate durability engine. Full local turn resumption
-requires a separately verified backend integration.
+Local workers automatically continue from supported checkpoints in the same
+context, workspace and attempt, up to three recoveries per attempt. The journal
+retains conversation history, persistent loop data, native Responses metadata,
+and completed model/final-response receipts. A recorded model result is reused
+without another provider call; completed tool results stay in history. Stable
+prompt/history prefixes and eligible provider state are preserved for warm starts.
+Provider cache availability, expiration and hits remain provider-controlled.
+
+Workers receive `swarm_execute` for finite local terminal, Python or Node.js batch
+commands. Its detached runner survives an Agent Zero server restart. Recovery
+reconnects to the original command or reads its committed result rather than
+running the command again. Command inputs, bounded output and receipts live in
+`usr/plugin_data/a0_swarm/commands/`. Commands have a maximum 30-minute timeout;
+this tool does not provide SSH, interactive shells or persistent Python variables.
+Ordinary tools remain available for those uses.
+
+A process crash at a safe model boundary can resume automatically. A host or
+container restart can also resume safe saved progress when storage survives, but
+it kills local command processes: a command without a confirmed outcome then
+shows **Needs review**. Interrupted ordinary tools, partial native tool batches,
+provider-side tool calls with no receipt, nested agent stacks, incompatible core
+changes, unavailable workspaces and checkpoints over 8 MiB are also held. Never
+blindly rerun an action whose side effects are unknown. Interactive browser/shell
+sessions and in-memory tool caches must be re-established. Checkpoints contain
+private chat data and need the same protection as chat storage.
+
+Workers admitted before 2.2 have no new checkpoints and remain held if interrupted.
+Recovery resumes the worker; it does not start a replacement parent chat turn.
+Collect the retained result from the panel or with `run_id`. This is a built-in
+plugin adapter using framework extension hooks; no core overrides or separate
+durability plugin are installed.
 
 Use the panel to check a known remote task, collect a completed result, or request
 cancellation. Cancellation stays **Cancel requested** until confirmed. If checks
@@ -199,6 +225,12 @@ Run `scripts/verify_framework.py` with the framework interpreter and an isolated
 plugin namespace for the synthetic process-kill lifecycle check. It disables
 extension discovery inside its child fixture and never calls a model provider.
 Use `--delivery` for the focused live-task/stopped-task message-handoff check.
+
+`scripts/verify_warm_recovery.py --framework /a0` exercises real enabled extension
+discovery, native Responses processing and command dispatch in isolated state.
+One deterministic worker survives kills after a model receipt and during a command;
+it verifies model-result reuse, same-context continuation and one command effect.
+Only provider output and prompt text are substituted; it makes no provider calls.
 
 The test suite covers finite fan-out, task validation, nested-orchestrator
 guards, parent-scoped registry state, terminal-state behavior, lifecycle hooks,

@@ -6,6 +6,7 @@ from dataclasses import asdict
 import functools
 import hashlib
 import json
+import time
 
 from .durable_store import DurableStore
 from .registry import (SwarmRegistry, SwarmAgent, SwarmAgentStatus as Status,
@@ -129,6 +130,10 @@ class DurableRegistry(SwarmRegistry):
                 agent.status = Status.PENDING
             elif agent.remote_task_id:
                 agent.status = Status.RECOVERING
+            elif agent.checkpoint.get("stage") in ("ready", "model", "response_ready", "durable_tool", "final") and agent.resume_count < 3:
+                agent.status = Status.RECOVERING
+                agent.current_activity = "Recovering saved progress"
+                agent.blocker = ""
             else:
                 agent.status = Status.REVIEW
                 agent.blocker = "Execution was interrupted; no verified resumable outcome is available."
@@ -136,6 +141,34 @@ class DurableRegistry(SwarmRegistry):
             if msg.delivery_state == "sending":
                 msg.delivery_state = "uncertain"
                 msg.failure_reason = "Delivery was interrupted before its receipt was committed."
+
+    @transaction
+    def save_checkpoint(self, name, attempt, checkpoint):
+        agent = self._agents[name]
+        if agent.attempt != attempt or agent.generation != self.store.generation or agent.status in TERMINAL:
+            raise RuntimeError("Checkpoint ownership changed")
+        agent.checkpoint = copy.deepcopy(checkpoint)
+
+    @transaction
+    def begin_resume(self, name, attempt):
+        agent = self._agents[name]
+        if agent.attempt != attempt or agent.cancel_requested or agent.resume_count >= 3:
+            raise ValueError("Automatic recovery limit reached or cancellation requested")
+        agent.resume_count += 1
+        agent.status = Status.RECOVERING
+        agent.blocker = ""
+        self.add_event(agent.run_id, name, "recovery", f"Warm recovery {agent.resume_count}: reusing saved progress and results.")
+
+    @transaction
+    def recover_after_error(self, name, attempt):
+        agent = self._agents[name]
+        if agent.attempt != attempt or agent.cancel_requested or agent.status in TERMINAL:
+            return
+        safe = agent.checkpoint.get("stage") in ("ready", "model", "response_ready", "durable_tool", "final")
+        agent.status = Status.RECOVERING if safe and agent.resume_count < 3 else Status.REVIEW
+        agent.next_wake = time.time() + min(30, 2 ** agent.resume_count)
+        agent.current_activity = "Recovering saved progress" if agent.status == Status.RECOVERING else ""
+        agent.blocker = "" if agent.status == Status.RECOVERING else "No confirmed continuation point is available, or automatic recovery is exhausted. Inspect retained work."
 
     @transaction
     def claim_message(self, message_id):
@@ -176,6 +209,8 @@ class DurableRegistry(SwarmRegistry):
         old.phase = "queued"
         old.context_id = ""
         old.workspace = {}
+        old.checkpoint = {}
+        old.resume_count = 0
         old.blocker = ""
         old.retries = 0
         old.next_wake = old.deadline = 0
