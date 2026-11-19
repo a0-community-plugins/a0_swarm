@@ -25,6 +25,9 @@ Enable **A0 Swarm** in Agent Zero's plugin settings and restart Agent Zero when
 the UI asks. The install hook performs lifecycle cleanup automatically.
 There is no separate Execute step.
 
+Use 2.1.1 or later: it fixes startup and disable hooks that incorrectly returned
+coroutines to synchronous framework lifecycle dispatch in 2.1.0.
+
 Runtime settings belong in the local `config.json`, which is ignored and must
 not be committed.
 

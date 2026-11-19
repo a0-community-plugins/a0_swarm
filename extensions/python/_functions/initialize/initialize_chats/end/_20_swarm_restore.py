@@ -3,7 +3,7 @@ from usr.plugins.a0_swarm.helpers.recovery import restore
 
 
 class SwarmRestore(Extension):
-    async def execute(self, data=None, **kwargs):
+    def execute(self, data=None, **kwargs):
         task = (data or {}).get("result")
         if task is not None:
             def restored(future):
