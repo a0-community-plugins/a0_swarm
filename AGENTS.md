@@ -11,6 +11,7 @@ Own bounded local/A2A delegation and durable swarm orchestration.
 - `helpers/execution.py` owns worker scheduling and recovery. The framework owns each local task; this plugin does not replay arbitrary model/tool calls.
 - Workers use persisted `AgentContextType.TASK`; core deliberately excludes `BACKGROUND` contexts from chat persistence. Restored chats remain inert until the journal permits work.
 - `helpers/recovery.py` and plugin extensions restore context ownership after chat restoration and reconcile from the job loop.
+- Function hooks for synchronous `initialize_chats` and `toggle_plugin` use synchronous `execute`; chat restoration attaches its callback to the returned deferred task.
 - `helpers/workspace.py` owns only explicitly marked workspaces. Recovery custody survives lifecycle changes.
 - `api/` and `webui/` expose chat-scoped controls and committed state.
 
